@@ -32,6 +32,10 @@ THREAD_SOURCES := $(wildcard src/threads/*.c)
 THREAD_TARGETS := $(patsubst src/threads/%.c,$(BUILD_DIR)/%,$(THREAD_SOURCES))
 TARGETS += $(THREAD_TARGETS)
 
+NETWORK_SOURCES := $(wildcard src/network/*.c)
+NETWORK_TARGETS := $(patsubst src/network/%.c,$(BUILD_DIR)/%,$(NETWORK_SOURCES))
+TARGETS += $(NETWORK_TARGETS)
+
 MINI_SHELL_SOURCES := \
 	src/mini_shell/main.c \
 	src/mini_shell/jobs.c \
@@ -64,6 +68,9 @@ $(IPC_TARGETS): $(BUILD_DIR)/%: src/ipc/%.c | $(BUILD_DIR)
 
 $(THREAD_TARGETS): $(BUILD_DIR)/%: src/threads/%.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -pthread $< -o $@
+
+$(NETWORK_TARGETS): $(BUILD_DIR)/%: src/network/%.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/mini_shell: $(MINI_SHELL_SOURCES) $(MINI_SHELL_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(MINI_SHELL_SOURCES) -o $@
