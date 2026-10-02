@@ -70,7 +70,7 @@ $(THREAD_TARGETS): $(BUILD_DIR)/%: src/threads/%.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -pthread $< -o $@
 
 $(NETWORK_TARGETS): $(BUILD_DIR)/%: src/network/%.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -pthread $< -o $@
 
 $(BUILD_DIR)/mini_shell: $(MINI_SHELL_SOURCES) $(MINI_SHELL_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(MINI_SHELL_SOURCES) -o $@
