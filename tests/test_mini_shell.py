@@ -9,7 +9,7 @@ import sys
 import time
 
 
-SHELL = "./build/mini_shell"
+SHELL = os.environ.get("MINI_SHELL_PATH", "./build/mini_shell")
 PROMPT = b"mini$ "
 CTRL_C = b"\x03"
 CTRL_Z = b"\x1a"

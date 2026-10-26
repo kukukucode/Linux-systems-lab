@@ -1,60 +1,67 @@
-name: Linux CI
+name: Component CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 0'
 
 permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  changes:
     runs-on: ubuntu-latest
-
+    outputs:
+      components: ${{ steps.select.outputs.components }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install development tools
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: select
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.sha }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential gdb strace
+          set -euo pipefail
+          ALL='["core","process","memory","io","ipc","mini-shell","threads","network","storage","indexing","security"]'
+          if [[ "$EVENT" == "schedule" || "$EVENT" == "workflow_dispatch" ]]; then
+            components="$ALL"
+          else
+            if [[ "$EVENT" == "pull_request" ]]; then
+              from="$BASE"
+            else
+              from="$BEFORE"
+            fi
+            if [[ -z "$from" || "$from" =~ ^0+$ ]] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then
+              components="$ALL"
+            elif ! git diff --name-only "$from" "$HEAD" > /tmp/changed-files; then
+              components="$ALL"
+            else
+              components="$(python3 scripts/ci_components.py < /tmp/changed-files)"
+            fi
+          fi
+          echo "components=$components" >> "$GITHUB_OUTPUT"
+          echo "Selected: $components"
 
-      - name: Show environment
-        run: |
-          uname -a
-          gcc --version
-          make --version
-          gdb --version
-          strace --version
-          cat /proc/version
-
-      - name: Build
-        run: |
-          make clean
-          make
-
-      - name: Run hello
-        run: ./build/hello
-
-      - name: Run tests
-        run: make test
-
-  sanitizers:
+  component:
+    needs: changes
+    if: needs.changes.outputs.components != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.changes.outputs.components) }}
+    name: ${{ matrix.component }}
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install development tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
-
-      - name: Run ASan and UBSan tests
-        run: make sanitizer-test
+      - uses: actions/checkout@v4
+      - name: Build and run ${{ matrix.component }} tests
+        run: make test-${{ matrix.component }}
+      - name: ASan and UBSan for ${{ matrix.component }}
+        run: make sanitize-${{ matrix.component }}
