@@ -345,4 +345,69 @@ print("SIGINT shutdown passed.")
 check_server_shutdown(signal.SIGTERM)
 print("SIGTERM shutdown passed.")
 
+
+# Check HTTP status, headers, and exact response body.
+def check_http_route(path, expected_status, expected_body):
+    process = subprocess.Popen(
+        [binary("http_routes")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    try:
+        readable, _, _ = select.select([process.stdout], [], [], 5)
+        assert readable, "HTTP server startup timeout"
+
+        line = process.stdout.readline()
+        match = re.fullmatch(
+            r"listening on 127\.0\.0\.1:(\d+)\n", line
+        )
+        assert match, f"unexpected startup output: {line!r}"
+
+        with socket.create_connection(
+            ("127.0.0.1", int(match.group(1))), timeout=5
+        ) as client:
+            client.settimeout(5)
+
+            request = (
+                f"GET {path} HTTP/1.1\r\n"
+                "Host: localhost\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("ascii")
+
+            client.sendall(request)
+
+            chunks = []
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+
+        output, _ = process.communicate(timeout=5)
+        assert process.returncode == 0, output
+
+        response = b"".join(chunks)
+        headers, separator, body = response.partition(b"\r\n\r\n")
+
+        assert separator, "missing HTTP header terminator"
+        assert headers.split(b"\r\n")[0] == expected_status
+        assert (
+            b"Content-Length: " + str(len(expected_body)).encode()
+        ) in headers.split(b"\r\n")
+        assert body == expected_body, (body, expected_body)
+
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+
+
+check_http_route("/hello", b"HTTP/1.1 200 OK", b"hello")
+check_http_route("/unknown", b"HTTP/1.1 404 Not Found", b"not found")
+
+print("HTTP 200/404 routing passed.")
+
 print("Network smoke tests passed.")
