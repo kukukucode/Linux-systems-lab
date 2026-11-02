@@ -68,4 +68,83 @@ finally:
         server.kill()
         server.communicate(timeout=5)
 
+
+# Check buffered epoll echo with a slow reader.
+import threading
+import time
+
+epoll_server = subprocess.Popen(
+    [binary("tcp_echo_epoll")],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    bufsize=1,
+)
+
+try:
+    readable, _, _ = select.select([epoll_server.stdout], [], [], 5)
+    if not readable:
+        raise AssertionError("epoll server startup timeout")
+
+    line = epoll_server.stdout.readline()
+    match = re.fullmatch(r"listening on 127\.0\.0\.1:(\d+)\n", line)
+    if not match:
+        raise AssertionError(f"unexpected epoll output: {line!r}")
+
+    # Keep draining logs so the server cannot block on stdout.
+    def drain_logs():
+        for _ in epoll_server.stdout:
+            pass
+
+    threading.Thread(target=drain_logs, daemon=True).start()
+
+    payload = bytes(range(256)) * 2048
+    errors = []
+
+    with socket.create_connection(
+        ("127.0.0.1", int(match.group(1))), timeout=5
+    ) as client:
+        client.settimeout(30)
+
+        def send_payload():
+            try:
+                client.sendall(payload)
+                client.shutdown(socket.SHUT_WR)
+            except OSError as error:
+                errors.append(error)
+
+        sender = threading.Thread(target=send_payload)
+        sender.start()
+
+        time.sleep(0.25)
+
+        received = bytearray()
+
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            received.extend(chunk)
+            time.sleep(0.002)
+
+        sender.join(timeout=5)
+
+        if sender.is_alive():
+            raise AssertionError("sender did not finish")
+        if errors:
+            raise errors[0]
+
+        assert received == payload, "epoll echo data mismatch"
+
+finally:
+    if epoll_server.poll() is None:
+        epoll_server.terminate()
+        try:
+            epoll_server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            epoll_server.kill()
+            epoll_server.wait(timeout=5)
+
+print("Buffered epoll echo integrity passed.")
+
 print("Network smoke tests passed.")
