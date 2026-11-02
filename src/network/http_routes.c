@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 static int is_token_char(unsigned char c)
@@ -148,18 +149,16 @@ int main(void)
         return 1;
     }
 
-    struct timeval timeout = {
-        .tv_sec = 2,
-        .tv_usec = 0,
-    };
+    struct timespec deadline;
 
-    if (setsockopt(connection_fd, SOL_SOCKET, SO_RCVTIMEO,
-                   &timeout, sizeof(timeout)) == -1) {
-        perror("setsockopt");
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1) {
+        perror("clock_gettime");
         close(connection_fd);
         close(listen_fd);
         return 1;
     }
+
+    deadline.tv_sec += 2;
 
     char request[4096];
     size_t received = 0;
@@ -168,6 +167,46 @@ int main(void)
     int recv_timeout = 0;
 
     while (received < sizeof(request) - 1) {
+        struct timespec now;
+
+        if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+            perror("clock_gettime");
+            close(connection_fd);
+            close(listen_fd);
+            return 1;
+        }
+
+        time_t seconds = deadline.tv_sec - now.tv_sec;
+        long nanoseconds = deadline.tv_nsec - now.tv_nsec;
+
+        if (nanoseconds < 0) {
+            --seconds;
+            nanoseconds += 1000000000L;
+        }
+
+        if (seconds < 0 ||
+            (seconds == 0 && nanoseconds == 0)) {
+            recv_timeout = 1;
+            break;
+        }
+
+        struct timeval timeout = {
+            .tv_sec = seconds,
+            .tv_usec = nanoseconds / 1000,
+        };
+
+        if (timeout.tv_sec == 0 && timeout.tv_usec == 0) {
+            timeout.tv_usec = 1;
+        }
+
+        if (setsockopt(connection_fd, SOL_SOCKET, SO_RCVTIMEO,
+                       &timeout, sizeof(timeout)) == -1) {
+            perror("setsockopt");
+            close(connection_fd);
+            close(listen_fd);
+            return 1;
+        }
+
         ssize_t n = read(connection_fd, request + received,
                          sizeof(request) - 1 - received);
 
@@ -203,6 +242,21 @@ int main(void)
         close(connection_fd);
         close(listen_fd);
         return 1;
+    }
+
+    struct timespec finished;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &finished) == -1) {
+        perror("clock_gettime");
+        close(connection_fd);
+        close(listen_fd);
+        return 1;
+    }
+
+    if (finished.tv_sec > deadline.tv_sec ||
+        (finished.tv_sec == deadline.tv_sec &&
+         finished.tv_nsec >= deadline.tv_nsec)) {
+        recv_timeout = 1;
     }
 
     char method[8];

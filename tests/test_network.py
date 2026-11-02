@@ -6,6 +6,7 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 build = Path(sys.argv[1] if len(sys.argv) > 1 else "build")
@@ -350,7 +351,8 @@ print("SIGTERM shutdown passed.")
 def check_http_route(
     path, expected_status, expected_body,
     method="GET", expected_allow=None, request_line=None,
-    raw_request=None, shutdown_write=False
+    raw_request=None, shutdown_write=False,
+    slow_chunks=0, max_elapsed=None
 ):
     process = subprocess.Popen(
         [binary("http_routes")],
@@ -390,7 +392,12 @@ def check_http_route(
             if raw_request is not None:
                 request = raw_request
 
+            started = time.monotonic()
             client.sendall(request)
+
+            for _ in range(slow_chunks):
+                time.sleep(0.4)
+                client.sendall(b"a")
 
             if shutdown_write:
                 client.shutdown(socket.SHUT_WR)
@@ -419,6 +426,12 @@ def check_http_route(
             ) in headers.split(b"\r\n")
 
         assert body == expected_body, (body, expected_body)
+
+        if max_elapsed is not None:
+            elapsed = time.monotonic() - started
+            assert elapsed < max_elapsed, (
+                f"HTTP deadline exceeded: {elapsed:.2f}s"
+            )
 
     finally:
         if process.poll() is None:
@@ -485,6 +498,15 @@ check_http_route(
     raw_request=b"GET /hello HTTP/1.1\r\n",
 )
 
-print("HTTP 200/400/404/405/408/431 routing passed.")
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 408 Request Timeout",
+    b"request timeout",
+    raw_request=b"GET /hello HTTP/1.1\r\nX-Slow: ",
+    slow_chunks=4,
+    max_elapsed=3.0,
+)
+
+print("HTTP routing and absolute deadline passed.")
 
 print("Network smoke tests passed.")
