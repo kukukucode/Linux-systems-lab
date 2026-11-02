@@ -478,6 +478,13 @@ check_http_route(
     shutdown_write=True,
 )
 
-print("HTTP 200/404/405/400/NUL/431/EOF routing passed.")
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 408 Request Timeout",
+    b"request timeout",
+    raw_request=b"GET /hello HTTP/1.1\r\n",
+)
+
+print("HTTP 200/400/404/405/408/431 routing passed.")
 
 print("Network smoke tests passed.")

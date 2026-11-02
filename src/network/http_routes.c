@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 static int is_token_char(unsigned char c)
@@ -147,10 +148,24 @@ int main(void)
         return 1;
     }
 
+    struct timeval timeout = {
+        .tv_sec = 2,
+        .tv_usec = 0,
+    };
+
+    if (setsockopt(connection_fd, SOL_SOCKET, SO_RCVTIMEO,
+                   &timeout, sizeof(timeout)) == -1) {
+        perror("setsockopt");
+        close(connection_fd);
+        close(listen_fd);
+        return 1;
+    }
+
     char request[4096];
     size_t received = 0;
     size_t header_end = 0;
     int peer_eof = 0;
+    int recv_timeout = 0;
 
     while (received < sizeof(request) - 1) {
         ssize_t n = read(connection_fd, request + received,
@@ -171,6 +186,12 @@ int main(void)
 
         if (n == -1 && errno == EINTR) {
             continue;
+        }
+
+        if (n == -1 &&
+            (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            recv_timeout = 1;
+            break;
         }
 
         if (n == 0) {
@@ -200,7 +221,15 @@ int main(void)
 
     const char *response;
 
-    if (header_end == 0 && !peer_eof) {
+    if (recv_timeout) {
+        response =
+            "HTTP/1.1 408 Request Timeout\r\n"
+            "Content-Type: text/plain\r\n"
+            "Content-Length: 15\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "request timeout";
+    } else if (header_end == 0 && !peer_eof) {
         response =
             "HTTP/1.1 431 Request Header Fields Too Large\r\n"
             "Content-Type: text/plain\r\n"
