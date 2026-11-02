@@ -444,6 +444,13 @@ check_http_route(
     request_line="GET /hello",
 )
 
-print("HTTP 200/404/405/400 routing passed.")
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    request_line="GET /hello HTTP/1.1\x00EXTRA",
+)
+
+print("HTTP 200/404/405/400/NUL routing passed.")
 
 print("Network smoke tests passed.")

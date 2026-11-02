@@ -84,6 +84,17 @@ static int parse_request_line(const char *request,
     return 1;
 }
 
+static size_t find_header_end(const char *data, size_t length)
+{
+    for (size_t i = 0; i + 4 <= length; ++i) {
+        if (memcmp(data + i, "\r\n\r\n", 4) == 0) {
+            return i + 4;
+        }
+    }
+
+    return 0;
+}
+
 int main(void)
 {
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -138,6 +149,7 @@ int main(void)
 
     char request[4096];
     size_t received = 0;
+    size_t header_end = 0;
 
     while (received < sizeof(request) - 1) {
         ssize_t n = read(connection_fd, request + received,
@@ -147,7 +159,9 @@ int main(void)
             received += (size_t)n;
             request[received] = '\0';
 
-            if (strstr(request, "\r\n\r\n") != NULL) {
+            header_end = find_header_end(request, received);
+
+            if (header_end != 0) {
                 break;
             }
 
@@ -164,7 +178,7 @@ int main(void)
         return 1;
     }
 
-    if (strstr(request, "\r\n\r\n") == NULL) {
+    if (header_end == 0) {
         fprintf(stderr, "HTTP headers too large or incomplete\n");
         close(connection_fd);
         close(listen_fd);
@@ -175,7 +189,8 @@ int main(void)
     char path[256];
     char version[16];
 
-    int valid = parse_request_line(request, method, path, version);
+    int valid = memchr(request, '\0', header_end) == NULL &&
+                parse_request_line(request, method, path, version);
 
     if (valid) {
         printf("method=%s\n", method);
