@@ -553,6 +553,37 @@ check_http_route(
     ),
 )
 
-print("HTTP routing, deadline, and Host validation passed.")
+# Validate HTTP header values and reject obsolete line folding.
+header_prefix = b"GET /hello HTTP/1.1\r\nHost: localhost\r\n"
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=header_prefix + b"X-Test: a\x01b\r\n\r\n",
+)
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=header_prefix + b"X-Test: a\x7fb\r\n\r\n",
+)
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=header_prefix + b"X-Test: a\r\n b\r\n\r\n",
+)
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 200 OK",
+    b"hello",
+    raw_request=header_prefix + b"X-Test: a\tb\r\n\r\n",
+)
+
+print("HTTP header syntax and routing tests passed.")
 
 print("Network smoke tests passed.")

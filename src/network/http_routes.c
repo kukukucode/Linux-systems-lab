@@ -144,6 +144,14 @@ static int validate_host_header(const char *request, size_t header_end)
             }
         }
 
+        for (const char *p = colon + 1; p < line_end; ++p) {
+            unsigned char c = (unsigned char)*p;
+
+            if ((c < 0x20 && c != '\t') || c == 0x7f) {
+                return 0;
+            }
+        }
+
         if (colon - line == 4 &&
             strncasecmp(line, "Host", 4) == 0) {
             if (++host_count != 1) {
