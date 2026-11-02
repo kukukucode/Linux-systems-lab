@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -24,6 +25,14 @@ struct client_state {
     int peer_eof;
     int64_t last_activity_ms;
 };
+
+static volatile sig_atomic_t stop_requested = 0;
+
+static void handle_stop(int signal_number)
+{
+    (void)signal_number;
+    stop_requested = 1;
+}
 
 static int64_t monotonic_ms(void)
 {
@@ -73,6 +82,16 @@ static void remove_client(int epoll_fd, int fd, int *active_clients,
 
 int main(void)
 {
+    struct sigaction action = {0};
+    action.sa_handler = handle_stop;
+
+    if (sigemptyset(&action.sa_mask) == -1 ||
+        sigaction(SIGINT, &action, NULL) == -1 ||
+        sigaction(SIGTERM, &action, NULL) == -1) {
+        perror("sigaction");
+        return 1;
+    }
+
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (listen_fd == -1) {
@@ -140,7 +159,7 @@ int main(void)
 
     struct epoll_event events[MAX_EVENTS];
 
-    for (;;) {
+    while (!stop_requested) {
         int ready = epoll_wait(epoll_fd, events, MAX_EVENTS, CHECK_INTERVAL_MS);
 
         if (ready == -1) {
@@ -153,6 +172,10 @@ int main(void)
         }
 
         for (int i = 0; i < ready; ++i) {
+            if (stop_requested) {
+                break;
+            }
+
             int fd = events[i].data.fd;
 
             if (fd == listen_fd) {
@@ -161,6 +184,10 @@ int main(void)
                 }
 
                 for (;;) {
+                    if (stop_requested) {
+                        break;
+                    }
+
                     int client_fd = accept(listen_fd, NULL, NULL);
 
                     if (client_fd == -1) {
@@ -354,7 +381,22 @@ int main(void)
         }
     }
 
-    close(epoll_fd);
+    if (stop_requested) {
+        printf("shutdown requested\n");
+    }
+
     close(listen_fd);
-    return 1;
+
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (clients[i].fd != -1) {
+            remove_client(epoll_fd, clients[i].fd,
+                          &active_clients, clients);
+        }
+    }
+
+    close(epoll_fd);
+
+    printf("shutdown complete\n");
+
+    return stop_requested ? 0 : 1;
 }

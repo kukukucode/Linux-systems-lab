@@ -285,4 +285,64 @@ finally:
 
 print("Buffered epoll echo integrity passed.")
 
+
+# Verify orderly shutdown for both termination signals.
+import signal
+
+
+def check_server_shutdown(stop_signal):
+    process = subprocess.Popen(
+        [binary("tcp_echo_epoll")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    try:
+        readable, _, _ = select.select([process.stdout], [], [], 5)
+        if not readable:
+            raise AssertionError("shutdown test: startup timeout")
+
+        line = process.stdout.readline()
+        match = re.fullmatch(
+            r"listening on 127\.0\.0\.1:(\d+)\n", line
+        )
+        assert match, f"unexpected startup output: {line!r}"
+
+        with socket.create_connection(
+            ("127.0.0.1", int(match.group(1))), timeout=5
+        ) as client:
+            client.settimeout(5)
+            client.sendall(b"shutdown probe\n")
+
+            received = bytearray()
+            while len(received) < len(b"shutdown probe\n"):
+                chunk = client.recv(64)
+                if not chunk:
+                    raise AssertionError("unexpected EOF before shutdown")
+                received.extend(chunk)
+
+            assert received == b"shutdown probe\n"
+
+            process.send_signal(stop_signal)
+            output, _ = process.communicate(timeout=5)
+
+            assert process.returncode == 0, output
+            assert "shutdown requested" in output, output
+            assert "closed fd=" in output, output
+            assert "shutdown complete" in output, output
+
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+
+
+check_server_shutdown(signal.SIGINT)
+print("SIGINT shutdown passed.")
+
+check_server_shutdown(signal.SIGTERM)
+print("SIGTERM shutdown passed.")
+
 print("Network smoke tests passed.")
