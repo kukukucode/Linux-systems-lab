@@ -3,6 +3,7 @@
 import re
 import select
 import socket
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -135,6 +136,50 @@ try:
             raise errors[0]
 
         assert received == payload, "epoll echo data mismatch"
+
+
+    # An aborted connection must not affect other clients.
+    def check_echo(sock, message):
+        sock.sendall(message)
+        received = bytearray()
+
+        while len(received) < len(message):
+            chunk = sock.recv(len(message) - len(received))
+
+            if not chunk:
+                raise AssertionError("unexpected EOF")
+
+            received.extend(chunk)
+
+        assert received == message, (received, message)
+
+    address = ("127.0.0.1", int(match.group(1)))
+
+    with socket.create_connection(address, timeout=5) as survivor:
+        survivor.settimeout(5)
+        check_echo(survivor, b"before reset\n")
+
+        with socket.create_connection(address, timeout=5) as resetter:
+            resetter.settimeout(5)
+            check_echo(resetter, b"reset client\n")
+
+            # Closing with SO_LINGER(1, 0) sends TCP RST.
+            resetter.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_LINGER,
+                struct.pack("ii", 1, 0),
+            )
+
+        time.sleep(0.2)
+
+        check_echo(survivor, b"after reset\n")
+
+        with socket.create_connection(address, timeout=5) as newcomer:
+            newcomer.settimeout(5)
+            check_echo(newcomer, b"new connection\n")
+
+    assert epoll_server.poll() is None
+    print("TCP RST resilience passed.")
 
 finally:
     if epoll_server.poll() is None:
