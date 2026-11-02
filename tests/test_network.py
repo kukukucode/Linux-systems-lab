@@ -347,7 +347,7 @@ print("SIGTERM shutdown passed.")
 
 
 # Check HTTP status, headers, and exact response body.
-def check_http_route(path, expected_status, expected_body):
+def check_http_route(path, expected_status, expected_body, method="GET", expected_allow=None):
     process = subprocess.Popen(
         [binary("http_routes")],
         stdout=subprocess.PIPE,
@@ -371,7 +371,7 @@ def check_http_route(path, expected_status, expected_body):
             client.settimeout(5)
 
             request = (
-                f"GET {path} HTTP/1.1\r\n"
+                f"{method} {path} HTTP/1.1\r\n"
                 "Host: localhost\r\n"
                 "Connection: close\r\n"
                 "\r\n"
@@ -397,6 +397,11 @@ def check_http_route(path, expected_status, expected_body):
         assert (
             b"Content-Length: " + str(len(expected_body)).encode()
         ) in headers.split(b"\r\n")
+        if expected_allow is not None:
+            assert (
+                b"Allow: " + expected_allow
+            ) in headers.split(b"\r\n")
+
         assert body == expected_body, (body, expected_body)
 
     finally:
@@ -408,6 +413,14 @@ def check_http_route(path, expected_status, expected_body):
 check_http_route("/hello", b"HTTP/1.1 200 OK", b"hello")
 check_http_route("/unknown", b"HTTP/1.1 404 Not Found", b"not found")
 
-print("HTTP 200/404 routing passed.")
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 405 Method Not Allowed",
+    b"method not allowed",
+    method="POST",
+    expected_allow=b"GET",
+)
+
+print("HTTP 200/404/405 routing passed.")
 
 print("Network smoke tests passed.")

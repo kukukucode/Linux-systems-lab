@@ -111,7 +111,17 @@ int main(void)
 
     const char *response;
 
-    if (strcmp(path, "/hello") == 0) {
+    if (strcmp(path, "/hello") == 0 &&
+        strcmp(method, "GET") != 0) {
+        response =
+            "HTTP/1.1 405 Method Not Allowed\r\n"
+            "Content-Type: text/plain\r\n"
+            "Content-Length: 18\r\n"
+            "Allow: GET\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "method not allowed";
+    } else if (strcmp(path, "/hello") == 0) {
         response =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/plain\r\n"
