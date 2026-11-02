@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
@@ -92,6 +93,76 @@ static size_t find_header_end(const char *data, size_t length)
         if (memcmp(data + i, "\r\n\r\n", 4) == 0) {
             return i + 4;
         }
+    }
+
+    return 0;
+}
+
+static int validate_host_header(const char *request, size_t header_end)
+{
+    const char *limit = request + header_end;
+    const char *line_end = request;
+
+    while (line_end + 1 < limit &&
+           !(line_end[0] == '\r' && line_end[1] == '\n')) {
+        ++line_end;
+    }
+
+    if (line_end + 1 >= limit) {
+        return 0;
+    }
+
+    const char *line = line_end + 2;
+    int host_count = 0;
+
+    while (line + 1 < limit) {
+        line_end = line;
+
+        while (line_end + 1 < limit &&
+               !(line_end[0] == '\r' && line_end[1] == '\n')) {
+            ++line_end;
+        }
+
+        if (line_end + 1 >= limit) {
+            return 0;
+        }
+
+        if (line == line_end) {
+            return host_count == 1 && line_end + 2 == limit;
+        }
+
+        const char *colon =
+            memchr(line, ':', (size_t)(line_end - line));
+
+        if (colon == NULL || colon == line) {
+            return 0;
+        }
+
+        for (const char *p = line; p < colon; ++p) {
+            if (!is_token_char((unsigned char)*p)) {
+                return 0;
+            }
+        }
+
+        if (colon - line == 4 &&
+            strncasecmp(line, "Host", 4) == 0) {
+            if (++host_count != 1) {
+                return 0;
+            }
+
+            const char *value = colon + 1;
+
+            while (value < line_end &&
+                   (*value == ' ' || *value == '\t')) {
+                ++value;
+            }
+
+            if (value == line_end) {
+                return 0;
+            }
+        }
+
+        line = line_end + 2;
     }
 
     return 0;
@@ -265,7 +336,8 @@ int main(void)
 
     int valid = header_end != 0 &&
                 memchr(request, '\0', header_end) == NULL &&
-                parse_request_line(request, method, path, version);
+                parse_request_line(request, method, path, version) &&
+                validate_host_header(request, header_end);
 
     if (valid) {
         printf("method=%s\n", method);

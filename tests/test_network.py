@@ -507,6 +507,52 @@ check_http_route(
     max_elapsed=3.0,
 )
 
-print("HTTP routing and absolute deadline passed.")
+# HTTP/1.1 requires exactly one non-empty Host header.
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=(
+        b"GET /hello HTTP/1.1\r\n"
+        b"Connection: close\r\n"
+        b"\r\n"
+    ),
+)
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=(
+        b"GET /hello HTTP/1.1\r\n"
+        b"Host: localhost\r\n"
+        b"Host: example.com\r\n"
+        b"\r\n"
+    ),
+)
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=(
+        b"GET /hello HTTP/1.1\r\n"
+        b"Host:\r\n"
+        b"\r\n"
+    ),
+)
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 200 OK",
+    b"hello",
+    raw_request=(
+        b"GET /hello HTTP/1.1\r\n"
+        b"host: localhost\r\n"
+        b"\r\n"
+    ),
+)
+
+print("HTTP routing, deadline, and Host validation passed.")
 
 print("Network smoke tests passed.")
