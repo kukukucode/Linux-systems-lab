@@ -178,18 +178,12 @@ int main(void)
         return 1;
     }
 
-    if (header_end == 0) {
-        fprintf(stderr, "HTTP headers too large or incomplete\n");
-        close(connection_fd);
-        close(listen_fd);
-        return 1;
-    }
-
     char method[8];
     char path[256];
     char version[16];
 
-    int valid = memchr(request, '\0', header_end) == NULL &&
+    int valid = header_end != 0 &&
+                memchr(request, '\0', header_end) == NULL &&
                 parse_request_line(request, method, path, version);
 
     if (valid) {
@@ -200,7 +194,15 @@ int main(void)
 
     const char *response;
 
-    if (!valid) {
+    if (header_end == 0) {
+        response =
+            "HTTP/1.1 431 Request Header Fields Too Large\r\n"
+            "Content-Type: text/plain\r\n"
+            "Content-Length: 17\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "headers too large";
+    } else if (!valid) {
         response =
             "HTTP/1.1 400 Bad Request\r\n"
             "Content-Type: text/plain\r\n"

@@ -349,7 +349,8 @@ print("SIGTERM shutdown passed.")
 # Check HTTP status, headers, and exact response body.
 def check_http_route(
     path, expected_status, expected_body,
-    method="GET", expected_allow=None, request_line=None
+    method="GET", expected_allow=None, request_line=None,
+    raw_request=None
 ):
     process = subprocess.Popen(
         [binary("http_routes")],
@@ -385,6 +386,9 @@ def check_http_route(
                 "Connection: close\r\n"
                 "\r\n"
             ).encode("ascii")
+
+            if raw_request is not None:
+                request = raw_request
 
             client.sendall(request)
 
@@ -451,6 +455,18 @@ check_http_route(
     request_line="GET /hello HTTP/1.1\x00EXTRA",
 )
 
-print("HTTP 200/404/405/400/NUL routing passed.")
+prefix = b"GET /hello HTTP/1.1\r\nX-Long: "
+oversized_request = prefix + b"a" * (4095 - len(prefix))
+
+assert len(oversized_request) == 4095
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 431 Request Header Fields Too Large",
+    b"headers too large",
+    raw_request=oversized_request,
+)
+
+print("HTTP 200/404/405/400/NUL/431 routing passed.")
 
 print("Network smoke tests passed.")
