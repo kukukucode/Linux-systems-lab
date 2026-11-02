@@ -181,6 +181,74 @@ try:
     assert epoll_server.poll() is None
     print("TCP RST resilience passed.")
 
+    # Test RST while the peer is not reading echoed data.
+    survivors = []
+    resetter = None
+
+    try:
+        for i in range(3):
+            sock = socket.create_connection(address, timeout=5)
+            sock.settimeout(5)
+            check_echo(sock, f"survivor {i}\\n".encode())
+            survivors.append(sock)
+
+        resetter = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        resetter.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        resetter.settimeout(5)
+        resetter.connect(address)
+        resetter.setblocking(False)
+
+        payload = b"X" * 65536
+        sent = 0
+        deadline = time.monotonic() + 3
+
+        while sent < 2097152 and time.monotonic() < deadline:
+            try:
+                n = resetter.send(payload)
+                if n == 0:
+                    break
+                sent += n
+            except BlockingIOError:
+                time.sleep(0.01)
+
+        assert sent > 0, "no data sent before RST"
+
+        time.sleep(0.25)
+
+        resetter.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_LINGER,
+            struct.pack("ii", 1, 0),
+        )
+        resetter.close()
+        resetter = None
+
+        for i, sock in enumerate(survivors):
+            check_echo(sock, f"still alive {i}\\n".encode())
+
+        # RST processing is asynchronous; allow time to free the slot.
+        deadline = time.monotonic() + 5
+
+        while True:
+            try:
+                with socket.create_connection(address, timeout=1) as newcomer:
+                    newcomer.settimeout(1)
+                    check_echo(newcomer, b"replacement\\n")
+                break
+            except (OSError, AssertionError):
+                if time.monotonic() >= deadline:
+                    raise AssertionError("client slot not reused after RST")
+                time.sleep(0.1)
+
+        assert epoll_server.poll() is None
+        print("RST under backpressure passed.")
+
+    finally:
+        if resetter is not None:
+            resetter.close()
+        for sock in survivors:
+            sock.close()
+
 finally:
     if epoll_server.poll() is None:
         epoll_server.terminate()
