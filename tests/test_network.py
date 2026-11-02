@@ -35,6 +35,11 @@ assert "total read=8 bytes" in drain, drain
 assert "third epoll_wait=1" in drain, drain
 assert "new data: XYZ (3 bytes)" in drain, drain
 
+partial = run("partial_write")
+assert "total sent=65536 bytes" in partial, partial
+assert "total received=65536 bytes" in partial, partial
+assert "data integrity=OK" in partial, partial
+
 server = subprocess.Popen(
     [binary("tcp_echo_server")],
     stdout=subprocess.PIPE,
