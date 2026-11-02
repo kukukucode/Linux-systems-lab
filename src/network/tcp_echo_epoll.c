@@ -3,6 +3,9 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <time.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -10,6 +13,8 @@
 #define MAX_CLIENTS 4
 #define MAX_EVENTS 8
 #define OUTPUT_CAPACITY 65536
+#define IDLE_TIMEOUT_MS 5000
+#define CHECK_INTERVAL_MS 1000
 
 struct client_state {
     int fd;
@@ -17,7 +22,21 @@ struct client_state {
     size_t output_len;
     size_t output_offset;
     int peer_eof;
+    int64_t last_activity_ms;
 };
+
+static int64_t monotonic_ms(void)
+{
+    struct timespec now;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+        perror("clock_gettime");
+        exit(EXIT_FAILURE);
+    }
+
+    return (int64_t)now.tv_sec * 1000 +
+           now.tv_nsec / 1000000;
+}
 
 static int set_nonblocking(int fd)
 {
@@ -122,7 +141,7 @@ int main(void)
     struct epoll_event events[MAX_EVENTS];
 
     for (;;) {
-        int ready = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+        int ready = epoll_wait(epoll_fd, events, MAX_EVENTS, CHECK_INTERVAL_MS);
 
         if (ready == -1) {
             if (errno == EINTR) {
@@ -200,6 +219,7 @@ int main(void)
                     clients[slot].output_len = 0;
                     clients[slot].output_offset = 0;
                     clients[slot].peer_eof = 0;
+                    clients[slot].last_activity_ms = monotonic_ms();
 
                     printf("client slot=%d fd=%d\n", slot, client_fd);
                     ++active_clients;
@@ -241,6 +261,7 @@ int main(void)
 
                     if (n > 0) {
                         client->output_len += (size_t)n;
+                        client->last_activity_ms = monotonic_ms();
                         printf("fd=%d queued=%zd bytes\n", fd, n);
                     } else if (n == 0) {
                         client->peer_eof = 1;
@@ -266,6 +287,7 @@ int main(void)
 
                 if (n > 0) {
                     client->output_offset += (size_t)n;
+                    client->last_activity_ms = monotonic_ms();
                     printf("fd=%d sent=%zd pending=%zu\n",
                            fd, n,
                            client->output_len -
@@ -311,6 +333,23 @@ int main(void)
                 remove_client(epoll_fd, fd,
                               &active_clients, clients);
                 continue;
+            }
+        }
+
+        int64_t now = monotonic_ms();
+
+        for (int j = 0; j < MAX_CLIENTS; ++j) {
+            if (clients[j].fd == -1) {
+                continue;
+            }
+
+            if (now - clients[j].last_activity_ms >= IDLE_TIMEOUT_MS) {
+                int idle_fd = clients[j].fd;
+
+                printf("idle timeout fd=%d\n", idle_fd);
+
+                remove_client(epoll_fd, idle_fd,
+                              &active_clients, clients);
             }
         }
     }

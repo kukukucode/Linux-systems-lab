@@ -249,6 +249,31 @@ try:
         for sock in survivors:
             sock.close()
 
+
+    # Idle clients should time out without affecting active clients.
+    with (
+        socket.create_connection(address, timeout=5) as idle,
+        socket.create_connection(address, timeout=5) as active,
+    ):
+
+        idle.settimeout(3)
+        active.settimeout(3)
+
+        for i in range(7):
+            check_echo(active, f"keepalive {i}\n".encode())
+            time.sleep(1)
+
+        assert idle.recv(1) == b"", "idle client was not disconnected"
+        print("Idle timeout passed.")
+
+        check_echo(active, b"still active\n")
+
+        with socket.create_connection(address, timeout=5) as newcomer:
+            newcomer.settimeout(3)
+            check_echo(newcomer, b"new client\n")
+
+        print("Active client and slot reuse passed.")
+
 finally:
     if epoll_server.poll() is None:
         epoll_server.terminate()
