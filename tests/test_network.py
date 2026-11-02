@@ -350,7 +350,7 @@ print("SIGTERM shutdown passed.")
 def check_http_route(
     path, expected_status, expected_body,
     method="GET", expected_allow=None, request_line=None,
-    raw_request=None
+    raw_request=None, shutdown_write=False
 ):
     process = subprocess.Popen(
         [binary("http_routes")],
@@ -391,6 +391,9 @@ def check_http_route(
                 request = raw_request
 
             client.sendall(request)
+
+            if shutdown_write:
+                client.shutdown(socket.SHUT_WR)
 
             chunks = []
             while True:
@@ -467,6 +470,14 @@ check_http_route(
     raw_request=oversized_request,
 )
 
-print("HTTP 200/404/405/400/NUL/431 routing passed.")
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=b"GET /hello HTTP/1.1\r\nHost: localhost\r\n",
+    shutdown_write=True,
+)
+
+print("HTTP 200/404/405/400/NUL/431/EOF routing passed.")
 
 print("Network smoke tests passed.")

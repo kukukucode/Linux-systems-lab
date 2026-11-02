@@ -150,6 +150,7 @@ int main(void)
     char request[4096];
     size_t received = 0;
     size_t header_end = 0;
+    int peer_eof = 0;
 
     while (received < sizeof(request) - 1) {
         ssize_t n = read(connection_fd, request + received,
@@ -170,6 +171,11 @@ int main(void)
 
         if (n == -1 && errno == EINTR) {
             continue;
+        }
+
+        if (n == 0) {
+            peer_eof = 1;
+            break;
         }
 
         fprintf(stderr, "incomplete HTTP request\n");
@@ -194,7 +200,7 @@ int main(void)
 
     const char *response;
 
-    if (header_end == 0) {
+    if (header_end == 0 && !peer_eof) {
         response =
             "HTTP/1.1 431 Request Header Fields Too Large\r\n"
             "Content-Type: text/plain\r\n"
