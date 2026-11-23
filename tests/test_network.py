@@ -352,7 +352,7 @@ def check_http_route(
     path, expected_status, expected_body,
     method="GET", expected_allow=None, request_line=None,
     raw_request=None, shutdown_write=False,
-    slow_chunks=0, max_elapsed=None
+    slow_chunks=0, max_elapsed=None, split_body=False
 ):
     process = subprocess.Popen(
         [binary("http_routes")],
@@ -395,6 +395,20 @@ def check_http_route(
             started = time.monotonic()
             client.sendall(request)
 
+            if split_body:
+                client.settimeout(0.25)
+                try:
+                    early = client.recv(1)
+                except socket.timeout:
+                    pass
+                else:
+                    raise AssertionError(
+                        f"premature HTTP response: {early!r}"
+                    )
+
+                client.settimeout(5)
+                client.sendall(b"llo")
+
             for _ in range(slow_chunks):
                 time.sleep(0.4)
                 client.sendall(b"a")
@@ -426,6 +440,9 @@ def check_http_route(
             ) in headers.split(b"\r\n")
 
         assert body == expected_body, (body, expected_body)
+
+        if split_body:
+            assert "body_received=5" in output, output
 
         if max_elapsed is not None:
             elapsed = time.monotonic() - started
@@ -586,4 +603,47 @@ check_http_route(
 
 print("HTTP header syntax and routing tests passed.")
 
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 405 Method Not Allowed",
+    b"method not allowed",
+    raw_request=(
+        b"POST /hello HTTP/1.1\r\n"
+        b"Host: localhost\r\n"
+        b"Content-Length: 5\r\n"
+        b"\r\n"
+        b"he"
+    ),
+    split_body=True,
+)
+
+partial_body_request = (
+    b"POST /hello HTTP/1.1\r\n"
+    b"Host: localhost\r\n"
+    b"Content-Length: 5\r\n"
+    b"\r\n"
+    b"he"
+)
+
+# Body is shorter than Content-Length, then the sender closes.
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 400 Bad Request",
+    b"bad request",
+    raw_request=partial_body_request,
+    shutdown_write=True,
+)
+
+print("Incomplete HTTP body EOF passed.")
+
+# Body is incomplete and the sender keeps the connection open.
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 408 Request Timeout",
+    b"request timeout",
+    raw_request=partial_body_request,
+)
+
+print("Incomplete HTTP body timeout passed.")
+print("Split HTTP body receiving passed.")
 print("Network smoke tests passed.")
