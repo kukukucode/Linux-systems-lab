@@ -96,7 +96,7 @@ static size_t find_header_end(const char *data, size_t length)
 }
 
 static int validate_host_header(const char *request, size_t header_end,
-                                size_t *content_length)
+                                size_t *content_length, int *client_close)
 {
     const char *limit = request + header_end;
     const char *line_end = request;
@@ -114,6 +114,7 @@ static int validate_host_header(const char *request, size_t header_end,
     int host_count = 0;
     int length_seen = 0;
     *content_length = 0;
+    *client_close = 0;
 
     while (line + 1 < limit) {
         line_end = line;
@@ -164,6 +165,34 @@ static int validate_host_header(const char *request, size_t header_end,
 
             if (value == line_end) {
                 return 0;
+            }
+        }
+
+        if (colon - line == 10 && strncasecmp(line, "Connection", 10) == 0) {
+            const char *part = colon + 1;
+
+            while (part < line_end) {
+                const char *comma =
+                    memchr(part, ',', (size_t)(line_end - part));
+                const char *end = comma == NULL ? line_end : comma;
+
+                while (part < end && (*part == ' ' || *part == '\t')) {
+                    ++part;
+                }
+
+                while (end > part && (end[-1] == ' ' || end[-1] == '\t')) {
+                    --end;
+                }
+
+                if (end - part == 5 && strncasecmp(part, "close", 5) == 0) {
+                    *client_close = 1;
+                }
+
+                if (comma == NULL) {
+                    break;
+                }
+
+                part = comma + 1;
             }
         }
 
@@ -388,11 +417,13 @@ int main(void)
         char version[16];
 
         size_t content_length = 0;
+        int client_close = 0;
 
         int valid = header_end != 0 &&
                     memchr(request, '\0', header_end) == NULL &&
                     parse_request_line(request, method, path, version) &&
-                    validate_host_header(request, header_end, &content_length);
+                    validate_host_header(request, header_end, &content_length,
+                                         &client_close);
 
         int body_eof = 0;
         size_t body_received = 0;
@@ -551,7 +582,8 @@ int main(void)
         const char *wire_response = response;
         char keep_alive_response[256];
 
-        if (request_index == 0 && valid && !recv_timeout && !body_eof) {
+        if (request_index == 0 && valid && !recv_timeout && !body_eof &&
+            !client_close) {
             const char *needle = "Connection: close";
             const char *found = strstr(response, needle);
 
@@ -601,7 +633,7 @@ int main(void)
         }
 
         if (request_index == 1 || !valid || recv_timeout || body_eof ||
-            header_end == 0) {
+            header_end == 0 || client_close) {
             break;
         }
     }

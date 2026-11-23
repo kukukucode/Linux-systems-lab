@@ -775,4 +775,154 @@ def check_http_keepalive():
 check_http_keepalive()
 print("Two-request HTTP Keep-Alive passed.")
 
+
+# Client-requested HTTP connection closure.
+def check_http_client_close(connection_value):
+    process = subprocess.Popen(
+        [binary("http_keepalive")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    try:
+        ready, _, _ = select.select([process.stdout], [], [], 5)
+        assert ready, "HTTP server startup timeout"
+
+        line = process.stdout.readline()
+        match = re.fullmatch(
+            r"listening on 127\.0\.0\.1:(\d+)\n", line
+        )
+        assert match, line
+
+        request = (
+            b"GET /hello HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Connection: " + connection_value + b"\r\n"
+            b"\r\n"
+        )
+
+        with socket.create_connection(
+            ("127.0.0.1", int(match.group(1))), timeout=5
+        ) as client:
+            client.settimeout(5)
+            client.sendall(request)
+
+            chunks = []
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+
+        output, _ = process.communicate(timeout=5)
+        assert process.returncode == 0, output
+
+        response = b"".join(chunks)
+        headers, separator, body = response.partition(b"\r\n\r\n")
+
+        assert separator
+        assert headers.startswith(b"HTTP/1.1 200 OK")
+        assert b"Connection: close" in headers.split(b"\r\n")
+        assert body == b"hello"
+        assert "path=/hello" in output
+
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+
+
+check_http_client_close(b"close")
+print("Client Connection: close passed.")
+
+check_http_client_close(b"keep-alive, CLOSE")
+print("Connection token parsing passed.")
+
+
+# Send the second request only after receiving the first response.
+def check_sequential_http_keepalive():
+    process = subprocess.Popen(
+        [binary("http_keepalive")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    def read_response(reader):
+        status = reader.readline().rstrip(b"\r\n")
+        assert status.startswith(b"HTTP/1.1 "), status
+
+        headers = {}
+        while True:
+            line = reader.readline()
+            assert line, "Unexpected EOF in response headers"
+
+            if line == b"\r\n":
+                break
+
+            name, value = line.split(b":", 1)
+            headers[name.lower()] = value.strip()
+
+        length = int(headers[b"content-length"])
+        body = reader.read(length)
+        assert len(body) == length
+
+        return status, headers, body
+
+    try:
+        ready, _, _ = select.select([process.stdout], [], [], 5)
+        assert ready, "HTTP server startup timeout"
+
+        line = process.stdout.readline()
+        match = re.fullmatch(
+            r"listening on 127\.0\.0\.1:(\d+)\n", line
+        )
+        assert match, line
+
+        with socket.create_connection(
+            ("127.0.0.1", int(match.group(1))), timeout=5
+        ) as client:
+            client.settimeout(5)
+
+            with client.makefile("rb") as reader:
+                client.sendall(
+                    b"GET /hello HTTP/1.1\r\n"
+                    b"Host: localhost\r\n\r\n"
+                )
+
+                status1, headers1, body1 = read_response(reader)
+
+                assert status1 == b"HTTP/1.1 200 OK"
+                assert headers1[b"connection"] == b"keep-alive"
+                assert body1 == b"hello"
+
+                # First response received; now send second request.
+                client.sendall(
+                    b"GET /unknown HTTP/1.1\r\n"
+                    b"Host: localhost\r\n\r\n"
+                )
+
+                status2, headers2, body2 = read_response(reader)
+
+                assert status2 == b"HTTP/1.1 404 Not Found"
+                assert headers2[b"connection"] == b"close"
+                assert body2 == b"not found"
+
+                assert reader.read(1) == b""
+
+        output, _ = process.communicate(timeout=5)
+        assert process.returncode == 0, output
+        assert "path=/hello" in output
+        assert "path=/unknown" in output
+
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+
+
+check_sequential_http_keepalive()
+print("Sequential HTTP Keep-Alive passed.")
+
 print("Network smoke tests passed.")
