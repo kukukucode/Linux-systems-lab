@@ -925,4 +925,74 @@ def check_sequential_http_keepalive():
 check_sequential_http_keepalive()
 print("Sequential HTTP Keep-Alive passed.")
 
+
+# An idle Keep-Alive connection should close without another response.
+def check_http_keepalive_idle_timeout():
+    import time
+
+    process = subprocess.Popen(
+        [binary("http_keepalive")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    try:
+        ready, _, _ = select.select([process.stdout], [], [], 5)
+        assert ready, "HTTP server startup timeout"
+
+        line = process.stdout.readline()
+        match = re.fullmatch(
+            r"listening on 127\.0\.0\.1:(\d+)\n", line
+        )
+        assert match, line
+
+        with socket.create_connection(
+            ("127.0.0.1", int(match.group(1))), timeout=5
+        ) as client:
+            client.settimeout(6)
+
+            with client.makefile("rb") as reader:
+                client.sendall(
+                    b"GET /hello HTTP/1.1\r\n"
+                    b"Host: localhost\r\n\r\n"
+                )
+
+                status = reader.readline().strip()
+                assert status == b"HTTP/1.1 200 OK"
+
+                headers = {}
+                while True:
+                    line = reader.readline()
+                    assert line, "Unexpected EOF in headers"
+                    if line == b"\r\n":
+                        break
+
+                    name, value = line.split(b":", 1)
+                    headers[name.lower()] = value.strip()
+
+                assert headers[b"connection"] == b"keep-alive"
+                length = int(headers[b"content-length"])
+                assert reader.read(length) == b"hello"
+
+                start = time.monotonic()
+
+                # Do not send a second request.
+                assert reader.read(1) == b""
+
+                elapsed = time.monotonic() - start
+                assert elapsed < 5.5, elapsed
+
+        output, _ = process.communicate(timeout=5)
+        assert process.returncode == 0, output
+
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+
+
+check_http_keepalive_idle_timeout()
+print("HTTP Keep-Alive idle timeout passed.")
+
 print("Network smoke tests passed.")
