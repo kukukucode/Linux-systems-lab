@@ -646,4 +646,43 @@ check_http_route(
 
 print("Incomplete HTTP body timeout passed.")
 print("Split HTTP body receiving passed.")
+
+# Content-Length boundary and framing validation.
+cl_prefix = b"GET /hello HTTP/1.1\r\nHost: localhost\r\n"
+
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 200 OK",
+    b"hello",
+    raw_request=cl_prefix + b"Content-Length: 0\r\n\r\n",
+)
+
+invalid_lengths = [
+    ("non-numeric", b"Content-Length: abc\r\n"),
+    ("negative", b"Content-Length: -1\r\n"),
+    (
+        "duplicate",
+        b"Content-Length: 2\r\nContent-Length: 2\r\n",
+    ),
+    (
+        "overflow",
+        b"Content-Length: " + b"9" * 64 + b"\r\n",
+    ),
+    (
+        "conflicting framing",
+        b"Content-Length: 0\r\nTransfer-Encoding: chunked\r\n",
+    ),
+]
+
+for name, fields in invalid_lengths:
+    check_http_route(
+        "/hello",
+        b"HTTP/1.1 400 Bad Request",
+        b"bad request",
+        raw_request=cl_prefix + fields + b"\r\n",
+    )
+    print(f"Content-Length {name}: OK")
+
+print("Content-Length boundary tests passed.")
+
 print("Network smoke tests passed.")
