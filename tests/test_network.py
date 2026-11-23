@@ -352,7 +352,8 @@ def check_http_route(
     path, expected_status, expected_body,
     method="GET", expected_allow=None, request_line=None,
     raw_request=None, shutdown_write=False,
-    slow_chunks=0, max_elapsed=None, split_body=False
+    slow_chunks=0, max_elapsed=None, split_body=False,
+    expected_body_received=None
 ):
     process = subprocess.Popen(
         [binary("http_routes")],
@@ -443,6 +444,11 @@ def check_http_route(
 
         if split_body:
             assert "body_received=5" in output, output
+
+        if expected_body_received is not None:
+            assert (
+                f"body_received={expected_body_received}" in output
+            ), output
 
         if max_elapsed is not None:
             elapsed = time.monotonic() - started
@@ -685,4 +691,19 @@ for name, fields in invalid_lengths:
 
 print("Content-Length boundary tests passed.")
 
+check_http_route(
+    "/hello",
+    b"HTTP/1.1 405 Method Not Allowed",
+    b"method not allowed",
+    raw_request=(
+        b"POST /hello HTTP/1.1\r\n"
+        b"Host: localhost\r\n"
+        b"Content-Length: 5\r\n"
+        b"\r\n"
+        b"helloEXTRA"
+    ),
+    expected_body_received=5,
+)
+
+print("Content-Length extra bytes test passed.")
 print("Network smoke tests passed.")
