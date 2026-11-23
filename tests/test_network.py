@@ -706,4 +706,73 @@ check_http_route(
 )
 
 print("Content-Length extra bytes test passed.")
+
+# Two pipelined HTTP requests on one TCP connection.
+def check_http_keepalive():
+    process = subprocess.Popen(
+        [binary("http_keepalive")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    try:
+        ready, _, _ = select.select([process.stdout], [], [], 5)
+        assert ready, "Keep-Alive startup timeout"
+
+        line = process.stdout.readline()
+        match = re.fullmatch(
+            r"listening on 127\.0\.0\.1:(\d+)\n", line
+        )
+        assert match, line
+
+        request = (
+            b"GET /hello HTTP/1.1\r\n"
+            b"Host: localhost\r\n\r\n"
+            b"GET /unknown HTTP/1.1\r\n"
+            b"Host: localhost\r\n\r\n"
+        )
+
+        with socket.create_connection(
+            ("127.0.0.1", int(match.group(1))), timeout=5
+        ) as client:
+            client.settimeout(5)
+            client.sendall(request)
+
+            chunks = []
+            while True:
+                data = client.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+
+        log, _ = process.communicate(timeout=5)
+        assert process.returncode == 0, log
+
+        response = b"".join(chunks)
+
+        headers1, sep1, rest = response.partition(b"\r\n\r\n")
+        assert sep1
+        assert headers1.startswith(b"HTTP/1.1 200 OK")
+        assert b"Connection: keep-alive" in headers1
+        assert rest.startswith(b"hello")
+
+        headers2, sep2, body2 = rest[5:].partition(b"\r\n\r\n")
+        assert sep2
+        assert headers2.startswith(b"HTTP/1.1 404 Not Found")
+        assert b"Connection: close" in headers2
+        assert body2 == b"not found"
+
+        assert "path=/hello" in log
+        assert "path=/unknown" in log
+
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+
+
+check_http_keepalive()
+print("Two-request HTTP Keep-Alive passed.")
+
 print("Network smoke tests passed.")
